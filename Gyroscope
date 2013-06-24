@@ -1,0 +1,129 @@
+#include <Wire.h>
+
+#define INT_STATUS 0x1A // registre de lecture des configuration d'interruption
+#define DLPF_FS 0x16 
+#define SMPLRT_DIV 0x15
+#define INT_CFG 0x17
+#define PWR_MGM 0x3E
+#define SCALE_FACTOR 5.375
+
+/*#define ACTIL (1<<7)
+#define OPEN (1<<6)
+#define LATCH_INT_EN (1<<5)
+#define INT_ANYRD_2CLEAR (1<<4)
+#define ITG_RDY_EN (1<<2)*/
+#define RAW_RDY_EN (1<<0) //bit permettant la lecture des données brutes
+/*#define CLK_SEL_0 (1<<0)
+#define CLK_SEL_1 (1<<1)
+#define CLK_SEL_2 (1<<2)
+#define STDY_ZG (1<<3)
+#define STDY_YG (1<<4)
+#define STDY_XG (1<<5)
+#define SLEEP(1<<6)*/
+#define H_RESET (1<<7)
+#define DLPF_CFG_0 (1<<0)
+#define DLPF_CFG_1 (1<<1)
+#define DLPF_CFG_2 (1<<2)
+//bits de configuration de l'amplitude des données d'acquisition ; par défaut +/-2000°/s ~ 03h
+#define DLPF_FS_SEL_0 (1<<3)// set 1
+#define DLPF_FS_SEL_1 (1<<4)// set 1
+
+float gyroData[3];
+float zeroAxis[3];
+float angle[3];
+long int timeLastMesure;
+long int timeCurrent;
+
+
+void setup(){
+  Serial.begin(115200);
+  Wire.begin();
+  InitGyro();
+  LectureDesCapteurs(gyroData);
+  NiveauZero(zeroAxis);
+  
+  timeLastMesure =micros();  
+}
+
+void loop(){
+  PositionAxe(angle);
+  
+  
+}
+  
+
+
+unsigned char i2cRead(char address, char registerAddress){
+  Wire.beginTransmission(address);
+  Wire.write(registerAddress);
+  Wire.endTransmission();
+  Wire.requestFrom(address,1);
+  if(Wire.available()){ 
+    return Wire.read();
+  }
+}
+
+void i2cWrite( char address, char registerAddress, char data){
+  Wire.beginTransmission(address);
+  Wire.write(registerAddress);
+  Wire.write(data);
+  Wire.endTransmission();
+}
+
+void InitGyro(){//initialisation du capteurs
+  i2cWrite(0x69, PWR_MGM, H_RESET); //reset 
+  i2cWrite(0x69, DLPF_FS, (DLPF_FS_SEL_0|DLPF_FS_SEL_1|5)); //set DPLF to 00011001; freq=1Khz low pass 10Hz range= +/- 2000°/s
+  i2cWrite(0x69, SMPLRT_DIV, 0); 
+  i2cWrite(0x69, INT_CFG,( RAW_RDY_EN ));
+  
+}
+
+int readTemp(){
+  int data=0;
+  data = (i2cRead(0x69, 0x1B)<<8 | i2cRead(0x69, 0x1C));
+  // mapping et offset 35 & temp range = -40° to 85°
+  return map(data, 4294901760,4294967295,-40,85)-31;
+} 
+
+void LectureDesCapteurs(float VitesseRotation[]){//les lecture des données en vitesse
+  VitesseRotation[0]= (i2cRead(0x69, 0x1D)<<8 | i2cRead(0x69,0x1E))/SCALE_FACTOR;//X
+  VitesseRotation[1]= (i2cRead(0x69, 0x1F)<<8 | i2cRead(0x69,0x20))/SCALE_FACTOR;//Y
+  VitesseRotation[2]= (i2cRead(0x69, 0x21)<<8 | i2cRead(0x69,0x22))/SCALE_FACTOR;//Z
+}
+
+void NiveauZero(float tab[]){ //Ecriture des niveau zero dans un tableau
+  //mise à zero des taux de rotation
+  float temp[3];
+  float data[3];
+  int n =0;
+  delay(5000);
+  while( n <5 ){
+    LectureDesCapteurs( data );
+    for(int i=0; i<=2; i++){
+      temp[i] += data[i];
+    }
+  delay(10); 
+  n++;
+  }
+  for(int i=0; i<=2; i++){
+    tab[i] = temp[i]/n;
+  }
+}
+
+void PositionAxe( float tab[]){//définie la position angulaire autour des axes
+    for(int i=0; i<=2; i++){
+      LectureDesCapteurs(gyroData); 
+      timeCurrent = micros();
+    if((gyroData[i]-zeroAxis[i])<-1 || (gyroData[i]-zeroAxis[i])>1){
+      tab[i]+= (gyroData[i]-zeroAxis[i])*(timeCurrent - timeLastMesure)/1000000;
+    }  
+   timeLastMesure = timeCurrent;
+   
+  }
+}
+  
+
+    
+    
+
+  
